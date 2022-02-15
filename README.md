@@ -57,3 +57,88 @@ Could you explain CI/CD?:
     - At the bottom, under 'Post-build Actions', select 'Build other projects'
     - Select the first item you created, and tick "Trigger only if build is stable".
     - Now, when you build the new project, it will run the bash commands, and if everything is successful it will automatically build the first project you designed as well, and execute those commands in the same console output.
+
+# Continuous Integration
+
+1. Set up a new freestyle project item in Jenkins
+    - `Discard old builds` - max builds: 3
+    - Select `GitHub Project`, copy and paste the clone HTTPS url here
+    - Select `Restrict where this project can be run`, and write `sparta-ubuntu-node`
+
+2. Set up a webhook and create an SSH key on GitHub
+    - Go to `Settings -> Webhooks -> Add webhook`
+    - Copy the URL along with the port of the Jenkins server, with `/github-webhook/` appended to the end, e.g. `http://14.130.53.18:8080/github-webhook/`
+    - Write content-type: `application/json`
+    - Open Git Bash and write the following code in your new repository for Jenkins' directory:
+    - `ssh-keygen -t ed25519 -C "your_email@example.com"`
+    - You will be prompted for a filename, keep it empty or write a custom name
+    - Press enter twice on the passphrase prompt to keep it empty
+        - If you specified a username, enter the following code to add it to the list of SSH keys:
+        - `eval "$(ssh-agent -s)"`
+        - `ssh-add ~/.ssh/filename`, where `filename` is the filename you specified
+    - use the `cat` command to list the contents of your key file in `~/.ssh`, so that you can copy paste it
+
+3. Complete the continuous integration job in Jenkins
+    - Continue on from the first step
+    - Select the `Git` box
+    - Add the GitHub `clone ssh` URL into `Repository URL`
+    - Select `Credential -> Add -> Key` and then insert your private key (cat filename without .pub extension for private key on Git Bash)
+    - Branches to build: `*/main` OR the specific branch you are working on, such as `*/dev`
+    - Build triggers: Select `GitHub hook trigger for GITScm Polling` (this triggers the build as soon as a change is pushed to the repository)
+    - In Build Environment, select `Provide Node & npm bin/ folder to PATH` and `SSH Agent` and provide the private key here
+    - Under `Build` select `Add build step -> Execute shell commands`:
+    ```bash
+    cd app
+    npm install
+    npm test
+    ```
+    - Finally, select `post-build actions` and write the name of the next item you will create for the continuous delivery job
+
+
+# Continuous Delivery
+
+1. Set up a new freestyle project in Jenkins
+    - `Discard old builds` - max builds: 3
+    - Select `GitHub Project`, copy and paste the clone HTTPS url here
+    - Select `Restrict where this project can be run`, and write `sparta-ubuntu-node`
+
+2. Finish the continuous delivery job in Jenkins
+    - Select the `Git` box
+    - Add the GitHub `clone ssh` URL into `Repository URL`
+    - Select `Credential -> Add -> Key` and then insert your private key (cat filename without .pub extension for private key on Git Bash)
+    - Branches to build: `*/main` OR the specific branch you are working on, such as `*/dev`
+    - In Build Environment, select `Provide Node & npm bin/ folder to PATH` and `SSH Agent` and provide the private key here, as well as the SSH keypair to access your AWS instance, should be a .pem file
+    - Under `Build` select `Add build step -> Execute shell commands`:
+    ```bash
+    git checkout main
+    git pull origin main
+    git merge origin/dev
+    git push origin main
+    scp -o "StrictHostKeyChecking=no" -v -r app ubuntu@ec2-54-195-167-174.eu-west-1.compute.amazonaws.com:~ 
+    ```
+    - Except, replace the ssh log-on URLs for the `scp` command
+
+# Continuous Deployment
+
+1. Edit the continuous delivery build shell commands to implement continuous deployment instead
+    - Replace the shell commands with: 
+    ```bash
+    git checkout main
+    git pull origin main
+    git merge origin/dev
+    git push origin main
+    scp -o "StrictHostKeyChecking=no" -v -r app ubuntu@ec2-54-195-167-174.eu-west-1.compute.amazonaws.com:~ 
+    ssh -o "StrictHostKeyChecking=no" -v -tt ubuntu@ec2-54-195-167-174.eu-west-1.compute.amazonaws.com << EOF
+    cd app 
+    sudo apt-get update -y
+    sudo apt-get upgrade -y
+    sudo apt-get install nginx -y
+    curl -sL https://deb.nodesource.com/setup_6.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    npm install
+    screen -d -m npm start
+    exit
+
+    EOF
+    ```
+    - Except, replace the ssh log-on URLs for the `scp` and `ssh` commands
